@@ -37,7 +37,7 @@ def get_percent(process):
 
 
 def get_memory(process):
-    return process.memory_info()
+    return process.memory_full_info()
 
 
 def all_children(pr):
@@ -84,6 +84,8 @@ def main():
                         help='include sub-processes in statistics (results '
                              'in a slower maximum sampling rate).',
                         action='store_true')
+    parser.add_argument('--no-cpu', help='no cpu readout on chart',action='store_true')
+    parser.add_argument('--uss-ram', help='real memory (RSS) is swapped for USS',action='store_true')
 
     args = parser.parse_args()
 
@@ -101,14 +103,14 @@ def main():
         pid = sprocess.pid
 
     monitor(pid, logfile=args.log, plot=args.plot, duration=args.duration,
-            interval=args.interval, include_children=args.include_children)
+            interval=args.interval, include_children=args.include_children,no_cpu=args.no_cpu,uss_ram=args.uss_ram)
 
     if sprocess is not None:
         sprocess.kill()
 
 
 def monitor(pid, logfile=None, plot=None, duration=None, interval=None,
-            include_children=False):
+            include_children=False,no_cpu=False,uss_ram=False):
 
     # We import psutil here so that the module can be imported even if psutil
     # is not present (for example if accessing the version)
@@ -119,12 +121,16 @@ def monitor(pid, logfile=None, plot=None, duration=None, interval=None,
     # Record start time
     start_time = time.time()
 
+    ram_label = 'Real (MB)'
+    if uss_ram:
+        ram_label = 'USS (MB)'
+
     if logfile:
         f = open(logfile, 'w')
         f.write("# {0:12s} {1:12s} {2:12s} {3:12s}\n".format(
             'Elapsed time'.center(12),
             'CPU (%)'.center(12),
-            'Real (MB)'.center(12),
+            ram_label.center(12),
             'Virtual (MB)'.center(12))
         )
 
@@ -165,7 +171,7 @@ def monitor(pid, logfile=None, plot=None, duration=None, interval=None,
                 current_mem = get_memory(pr)
             except Exception:
                 break
-            current_mem_real = current_mem.rss / 1024. ** 2
+            current_mem_real = (current_mem.uss if uss_ram  else current_mem.rss) / 1024. ** 2
             current_mem_virtual = current_mem.vms / 1024. ** 2
 
             # Get information for children
@@ -176,7 +182,7 @@ def monitor(pid, logfile=None, plot=None, duration=None, interval=None,
                         current_mem = get_memory(child)
                     except Exception:
                         continue
-                    current_mem_real += current_mem.rss / 1024. ** 2
+                    current_mem_real += (current_mem.uss if uss_ram else current_mem.rss) / 1024. ** 2
                     current_mem_virtual += current_mem.vms / 1024. ** 2
 
             if logfile:
@@ -209,21 +215,22 @@ def monitor(pid, logfile=None, plot=None, duration=None, interval=None,
         import matplotlib.pyplot as plt
         with plt.rc_context({'backend': 'Agg'}):
 
-            fig = plt.figure()
+            fig = plt.figure()  
             ax = fig.add_subplot(1, 1, 1)
 
-            ax.plot(log['times'], log['cpu'], '-', lw=1, color='r')
+            if not no_cpu:
+                ax.plot(log['times'], log['cpu'], '-', lw=1, color='r')
 
-            ax.set_ylabel('CPU (%)', color='r')
+                ax.set_ylabel('CPU (%)', color='r')
+                ax.set_ylim(0., max(log['cpu']) * 1.2)
             ax.set_xlabel('time (s)')
-            ax.set_ylim(0., max(log['cpu']) * 1.2)
 
             ax2 = ax.twinx()
 
             ax2.plot(log['times'], log['mem_real'], '-', lw=1, color='b')
             ax2.set_ylim(0., max(log['mem_real']) * 1.2)
 
-            ax2.set_ylabel('Real Memory (MB)', color='b')
+            ax2.set_ylabel(ram_label, color='b')
 
             ax.grid()
 
